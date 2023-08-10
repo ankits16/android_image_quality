@@ -1,0 +1,15 @@
+{
+  "pages": [
+    {
+      "id": 1,
+      "sections": [
+        {
+          "position": 1,
+          "id": 1,
+          "title": "",
+          "fields": []
+        }
+      ]
+    }
+  ]
+}
