@@ -42,14 +42,57 @@ import android.media.ExifInterface
 import android.os.Build
 import androidx.annotation.RequiresApi
 import android.util.Base64
+import org.opencv.android.OpenCVLoader
+import org.opencv.core.Core
+import org.opencv.core.CvType
+import org.opencv.core.CvType.CV_32FC3
+import org.opencv.core.Mat
+import org.opencv.core.MatOfByte
+import org.opencv.core.Scalar
+import org.opencv.core.Size
+import org.opencv.dnn.Dnn
+import org.opencv.dnn.Dnn.blobFromImage
+import org.opencv.imgcodecs.Imgcodecs
+import org.opencv.imgproc.Imgproc
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import org.opencv.android.Utils
+import java.io.FileDescriptor
+import org.tensorflow.lite.support.image.TensorImage
+import java.io.FileWriter
 
+fun Bitmap.saveBitmapAsCSV(context: Context, filePath: String) {
+    val width = width
+    val height = height
+    val pixels = IntArray(width * height)
+    getPixels(pixels, 0, width, 0, 0, width, height)
+    val outputFile = File(context.filesDir, filePath)
+    val writer = FileWriter(outputFile)
+    for (y in 0 until height) {
+        val sb = StringBuilder()
+        for (x in 0 until width) {
+            val pixel = pixels[y * width + x]
+            val red = (pixel shr 16) and 0xFF
+            val green = (pixel shr 8) and 0xFF
+            val blue = pixel and 0xFF
+            if (x > 0) {
+                sb.append(',')
+            }
+            sb.append("$red,$green,$blue")
+        }
+        writer.write(sb.toString())
+        writer.write("\n")
+    }
+    Log.d("image_quality","<<<<<<, saveBitmapAsCSV $filePath")
+    writer.close()
+}
 
 class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "image_quality"
     }
     private var imageUri: Uri? = null
+    private lateinit var assetManager: AssetManager
 //    private var interpreter : Interpreter? = null
 
     private lateinit var interpreter: Interpreter
@@ -116,32 +159,32 @@ class MainActivity : AppCompatActivity() {
         return outputShape.reduce { acc, value -> acc * value } * outputDataType.byteSize()
     }
 
-    private fun callProcessImage(bitmap: Bitmap, onComplete: (FloatArray) -> Unit) {
-        val inputChannels = 3 // Number of color channels (RGB)
-        val newWidth = 256 // Use the original newWidth from your Python code
-        val newHeight = 512 // Use the original newHeight from your Python code
-
-        val means = floatArrayOf(118.03f, 112.65f, 108.60f) // Hardcoded mean values
-        val stds = floatArrayOf(70.75f, 71.51f, 73.11f) // Hardcoded standard deviation values
-
-        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
-        saveBitmapToFile(resizedBitmap, "resized_image_python.png", this@MainActivity)
+    private fun callProcessImage(bitmap: Bitmap, onComplete: (Float) -> Unit) {
+//        val inputChannels = 3 // Number of color channels (RGB)
+//        val newWidth = 256 // Use the original newWidth from your Python code
+//        val newHeight = 512 // Use the original newHeight from your Python code
+//
+//        val means = floatArrayOf(118.03f, 112.65f, 108.60f) // Hardcoded mean values
+//        val stds = floatArrayOf(70.75f, 71.51f, 73.11f) // Hardcoded standard deviation values
+//
+//        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+//        saveBitmapToFile(resizedBitmap, "resized_image_python.png", this@MainActivity)
 
         val coroutineScope = CoroutineScope(Dispatchers.Default)
         coroutineScope.launch {
-            val outputArray = newPreProcessImage(resizedBitmap)
+            val outputArray = runInference(bitmap) //newPreProcessImage(resizedBitmap)
             withContext(Dispatchers.Main) {
                 onComplete(outputArray)
             }
         }
     }
 
-    private fun saveBitmapToFile(bitmap: Bitmap, filename: String, context: Context) {
+    fun saveBitmapToFile(bitmap: Bitmap, filename: String, context: Context) {
         val file = File(context.filesDir, filename)
 
         try {
             val outStream = FileOutputStream(file)
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, outStream)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outStream)
             outStream.flush()
             outStream.close()
         } catch (e: Exception) {
@@ -349,26 +392,22 @@ class MainActivity : AppCompatActivity() {
 
             imageUri = it.data?.data
             var inpStream = imageUri?.let { it1 -> contentResolver.openInputStream(it1) }
-//            var bitmap = BitmapFactory.decodeStream(inpStream).scale(256, 512,false)
-//            var bitmap = getCorrectlyOrientedImage(imageUri, 256)?.scale(256, 512,true)
-//            val bitmap: Bitmap = MediaStore.Images.Media.getBitmap(contentResolver, imageUri)
-//            val resizedBitmap = Bitmap.createScaledBitmap(bitmap, 256, 512, true)
-//            pickedImageView.setImageBitmap(resizedBitmap)
-////            pickedImageView.setImageURI(imageUri)
-////            bitmap?.let { it1 -> performInference(newPreProcessImage(it1))
-////            }
-//            val inputBuffer = newPreProcessImage(resizedBitmap)
-//            val outputArray = runModel(inputBuffer)
-//            val inputStream = contentResolver.openInputStream(it)
             val options = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
             val bitmap = BitmapFactory.decodeStream(inpStream, null, options)
-            val exif = ExifInterface(inpStream!!)
-            val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            val channelOrientation = BitmapUtils.getChannelOrientation(bitmap!!)
+            println("Bitmap channel orientation read from gallery: $channelOrientation")
+//            val exif = ExifInterface(inpStream!!)
+//            val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
             var orientation2: Int = getOrientation(imageUri)
+            val tvScore = findViewById<TextView>(R.id.tvScore)
             Log.d(TAG, "********** orientation2 is: $orientation2")
+            bitmap.saveBitmapAsCSV (this, "android_original.csv")
             val rotatedBitmap = rotateBitmap(bitmap!!, orientation2)
+            rotatedBitmap.saveBitmapAsCSV(this, "android_original_rotated.csv")
+            val channelOrientationrot = BitmapUtils.getChannelOrientation(rotatedBitmap)
+            println("Bitmap channel orientation rotated image: $channelOrientationrot")
 //            val rotatedBitmap = when (orientation2) {
 //                ExifInterface.ORIENTATION_ROTATE_90 -> rotateBitmap(bitmap!!, 90f)
 //                ExifInterface.ORIENTATION_ROTATE_180 -> rotateBitmap(bitmap!!, 180f)
@@ -384,11 +423,124 @@ class MainActivity : AppCompatActivity() {
             callProcessImage(rotatedBitmap!!){ outputArray ->
                 // This code will run when the preprocessing is complete
                 // Handle the outputArray here (e.g., run inference and display results)
+
+                tvScore.text = "here $outputArray"
                 print("here $outputArray")
             }
 
         }
     }
+
+    /*fun runInference(bitmap: Bitmap): Float {
+        System.loadLibrary(Core.NATIVE_LIBRARY_NAME)
+
+        val newHeight = 512
+        val newWidth = 256
+//
+//        // Resize the input Bitmap using OpenCV
+//        val resizedBitmap = Mat()
+//        Utils.bitmapToMat(bitmap, resizedBitmap)
+//        Imgproc.resize(resizedBitmap, resizedBitmap, Size(newWidth.toDouble(), newHeight.toDouble()))
+
+//        // Preprocess the image using OpenCV
+//        val means = Scalar(118.03, 112.65, 108.60)
+//        val stds = Scalar(70.75, 71.51, 73.11)
+//
+//        val normalizedImage = Mat()
+//        Core.subtract(resizedBitmap, means, normalizedImage)
+//        Core.divide(normalizedImage, stds, normalizedImage)
+//
+//        val inputBuffer = ByteBuffer.allocateDirect(4 * newWidth * newHeight * 3)
+//        inputBuffer.order(ByteOrder.nativeOrder())
+//
+//        // Flatten the normalizedImage matrix and put the values directly into inputBuffer
+//        for (row in 0 until newHeight) {
+//            for (col in 0 until newWidth) {
+//                val pixel = normalizedImage.get(row, col)
+//                inputBuffer.putFloat(pixel[0].toFloat())
+//                inputBuffer.putFloat(pixel[1].toFloat())
+//                inputBuffer.putFloat(pixel[2].toFloat())
+//            }
+//        }
+//
+//
+//        val outputBuffer = ByteBuffer.allocateDirect(4)
+//        outputBuffer.order(ByteOrder.nativeOrder())
+//        val modelFile = "tflite_model.tflite"
+//        interpreter = Interpreter(loadModelFile(modelFile, assets))
+//        interpreter.run(inputBuffer, outputBuffer)
+//
+//        val score =  outputBuffer.getFloat(0)
+//        return  score
+        // Resize the input bitmap
+        val inputSize = 3 * newWidth * newHeight
+        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, false)
+
+        // Convert the resized Bitmap to a float array for inference
+        val inputArray = FloatArray(inputSize)
+        val imageMat = Mat(newHeight, newWidth, CvType.CV_32FC3)  // Use CV_32FC3 for floating-point values
+        Utils.bitmapToMat(resizedBitmap, imageMat)
+
+        // Normalize the input using means and stds
+        val means = floatArrayOf(118.03f, 112.65f, 108.60f)
+        val stds = floatArrayOf(70.75f, 71.51f, 73.11f)
+        var index = 0
+        for (row in 0 until newHeight) {
+            for (col in 0 until newWidth) {
+                val pixel = imageMat.get(row, col)
+                for (channel in 0 until 3) {
+                    inputArray[index] = (pixel[channel].toFloat() - means[channel]) / stds[channel]
+                    index++
+                }
+            }
+        }
+
+        // Load the TensorFlow Lite model
+        val model = Interpreter(loadModelFile("tflite_model.tflite", assets))
+
+        // Allocate buffers for input and output tensors
+        val inputBuffer: ByteBuffer = ByteBuffer.allocateDirect(inputSize * 4)  // 4 bytes for float
+        inputBuffer.order(java.nio.ByteOrder.nativeOrder())
+        inputBuffer.rewind()
+        inputBuffer.asFloatBuffer().put(inputArray)
+
+        val outputSize = 4  // Assuming output is a single float
+        val outputBuffer: ByteBuffer = ByteBuffer.allocateDirect(outputSize * 4)  // 4 bytes for float
+        outputBuffer.order(java.nio.ByteOrder.nativeOrder())
+        outputBuffer.rewind()
+
+        // Run inference
+        model.run(inputBuffer, outputBuffer)
+
+        // Get the inference result
+        outputBuffer.rewind()
+        val result = outputBuffer.asFloatBuffer().get()
+        return  result
+    }*/
+
+    fun runInference(bitmap: Bitmap): Float {
+        return ImageInference(this, assets).runInference(bitmap, null) //(0.0).toFloat()
+    }
+
+    fun BitmapToFloatArray(bitmap: Bitmap, means: FloatArray, stds: FloatArray): FloatArray {
+        val imageMat = Mat(bitmap.height, bitmap.width, CvType.CV_32FC3)
+        Utils.bitmapToMat(bitmap, imageMat)
+        Imgproc.cvtColor(imageMat, imageMat, Imgproc.COLOR_RGBA2RGB)
+
+        val floatArray = FloatArray(bitmap.width * bitmap.height * 3)
+        var index = 0
+        for (y in 0 until bitmap.height) {
+            for (x in 0 until bitmap.width) {
+                val pixel = imageMat.get(y, x)
+                floatArray[index++] = (pixel[0].toFloat() - means[0]) / stds[0]
+                floatArray[index++] = (pixel[1].toFloat() - means[1]) / stds[1]
+                floatArray[index++] = (pixel[2].toFloat() - means[2]) / stds[2]
+            }
+        }
+
+        return floatArray
+    }
+
 
     private fun loadModelFile(modelFile: String, assetManager: AssetManager): MappedByteBuffer {
         val fileDescriptor = assetManager.openFd(modelFile)
@@ -405,6 +557,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        if(OpenCVLoader.initDebug()){
+
+            System.loadLibrary(Core.NATIVE_LIBRARY_NAME)
+            Log.d("myapp", "<<<<<<<<< Open Cv is initialized")
+            println("OpenCV version: ${Core.VERSION}")
+        }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
             != PackageManager.PERMISSION_GRANTED

@@ -18,7 +18,8 @@ import java.io.FileWriter
 
 class ImageAdapter(private val imageList: MutableList<ImageItem>, private val context: Context) :
     RecyclerView.Adapter<ImageAdapter.ViewHolder>() {
-    private val imageQualityAnalyzer = ImageQualityAnalyzer(context)
+    private val imageQualityAnalyzer = ImageInference(context, assetManager = context.assets)
+    //ImageQualityAnalyzer(context)
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val imageView: ImageView = itemView.findViewById(R.id.imageView1)
@@ -44,7 +45,7 @@ class ImageAdapter(private val imageList: MutableList<ImageItem>, private val co
                 withContext(Dispatchers.Main) {
                     imageView.setImageBitmap(rotatedBitmap.first)
                     processedImageView.setImageBitmap(rotatedBitmap.second)
-                    imageQualityAnalyzer.analyze(rotatedBitmap.second){ score ->
+                    imageQualityAnalyzer.analyze(rotatedBitmap.second, imageItem.name){ score ->
                         imageItem.qualityScore = score
                         imageItem.inferenceState = InferenceState.Completed
                         mlInfo.text = when (imageItem.inferenceState) {
@@ -99,6 +100,7 @@ class ImageAdapter(private val imageList: MutableList<ImageItem>, private val co
     fun exportCSV(){
         Log.d("image_quality", "<<<<<<<<  start csv export ")
         try {
+            ///storage/emulated/0/Android/data/com.yourappname/files/
             val file = File(context.getExternalFilesDir(null), "android_image_quality.csv")
             val writer = FileWriter(file)
 
